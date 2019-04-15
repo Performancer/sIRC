@@ -165,7 +165,7 @@ namespace sIRC
                     else if (activeChannel != GetChannel(server))
                     {
                         network.Send("PRIVMSG " + activeChannel + " :" + temp, false);
-                        activeChannel.Add(string.Format("<{0}> {1}", nick, temp), true);
+                        activeChannel.AddEntry(string.Format("<{0}> {1}", nick, temp), true, ConsoleColor.DarkMagenta);
                     }
                     else
                     {

@@ -109,7 +109,7 @@ namespace sIRC
                             message = string.Format("Usermode changed: {0}", string.Join(" ", response.GetParameters()));
                         break;
 
-                    case "PONG": message = string.Format("{0} {1}", response.Command, response.GetParameter(0)); break;
+                    case "PONG": message = string.Format("{0} {1}", response.Command, response.GetParameter(1)); break;
 
                     case "NICK": message = string.Format("{0} has changed nick to {1}", response.Prefix.Split('!')[0], response.GetParameter(0)); break;
                     case "QUIT": message = string.Format("{0} has quit IRC ({1})", response.Prefix.Split('!')[0], response.GetParameter(0)); color = ConsoleColor.Blue; break;
@@ -126,22 +126,11 @@ namespace sIRC
             }
 
             if (message != null)
-            {
-                string full = string.Format("[{0}][{1}] {2}", DateTime.Now.ToString("HH:mm:ss"), name, message);
-
-                entries.Add(new Entry(full, (int)color));
-
-                if(active)
-                    Log.WriteLine(full, color);
-
-                Log.WriteToFile(name + ".txt", message, true);
-            }
+                AddEntry(message, active, color);
         }
 
-        public void Add(string message, bool active)
+        public void AddEntry(string message, bool active, ConsoleColor color)
         {
-            ConsoleColor color = ConsoleColor.DarkMagenta;
-
             string full = string.Format("[{0}][{1}] {2}", DateTime.Now.ToString("HH:mm:ss"), name, message);
 
             entries.Add(new Entry(full, (int)color));
