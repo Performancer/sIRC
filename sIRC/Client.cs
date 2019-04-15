@@ -19,7 +19,9 @@ namespace sIRC
 
         private Channel activeChannel;
         private string command;
-        private bool ready, refresh;
+        private bool ready, refresh, quit;
+        private DateTime lastPingTime;
+        private TimeSpan pingDelay = TimeSpan.FromMinutes(1);
 
         public Client(string server, int port, string user, string nick)
         {
@@ -67,76 +69,123 @@ namespace sIRC
 
         public virtual void Start()
         {
-            while (true)
+            while (!network.Connect(nick, user))
             {
-                if (network.Connect(nick, user))
-                    break;
-
                 Console.WriteLine("Attempting to reconnect in 5 seconds");
                 Thread.Sleep(5000);
             }
 
-            while (true)
+            Run();
+        }
+
+        public void Run()
+        {
+            while (network.Connected())
             {
                 network.Slice();
 
-                if (!ready)
+                if (ready)
+                {
+                    if (lastPingTime + pingDelay < DateTime.Now)
+                        Ping();
+
+                    if (Console.KeyAvailable)
+                        HandleInput(Console.ReadKey().KeyChar);
+                }
+                else
+                {
                     spinner.Turn();
 
-                if (Console.KeyAvailable)
-                {
-                    char character = Console.ReadKey().KeyChar;
-
-                    if (!ready)
-                        continue;
-
-                    switch (character)
+                    if (Console.KeyAvailable)
                     {
-                        case (char)08: //BACKSPACE
-                            Console.CursorLeft++;
-
-                            if (command != null && command.Length > 0)
-                            {
-                                command = command.Remove(command.Length - 1);
-                                Log.ClearLastCharacter();
-                            }
-                            break;
-                        case (char)10: //LINE FEED
-                            break;
-                        case (char)13: //ENTER
-                            string temp = command;
-                            command = "";
-
-                            if (temp == "/switch")
-                            {
-                                SetLayout();
-                            }
-                            else if (temp.StartsWith("/"))
-                            {
-                                network.Send(temp.Substring(1), true);
-                            }
-                            else if (activeChannel != GetChannel(server))
-                            {
-                                network.Send("PRIVMSG " + activeChannel + " :" + temp, false);
-                                activeChannel.Add("<" + nick + "> " + temp, true);
-                            }
-                            else
-                            {
-                                Console.WriteLine("Use '/' to type a command.");
-                            }
-                            break;
-                        default:
-                            command += character;
-                            break;
+                        char character = Console.ReadKey(true).KeyChar;
                     }
                 }
 
                 if (refresh)
                     Update();
             }
+
+            Restart();
         }
 
-        private void HandleReceived(string received)
+        public void Restart()
+        {
+            ready = false;
+
+            Console.WriteLine("Write 'RECONNECT' or 'EXIT' to continue...");
+
+            while (quit)
+            {
+                string command = Console.ReadLine();
+
+                if (command.ToUpper() == "RECONNECT")
+                    quit = false;
+                else if (command.ToUpper() == "EXIT")
+                    return;
+            }
+
+            Start();
+        }
+
+        public virtual void HandleInput(char character)
+        {
+            switch (character)
+            {
+                case (char)08: //BACKSPACE
+                    Console.CursorLeft++;
+
+                    if (command != null && command.Length > 0)
+                    {
+                        command = command.Remove(command.Length - 1);
+                        Log.ClearLastCharacter();
+                    }
+                    break;
+                case (char)10: //LINE FEED
+                    break;
+                case (char)13: //ENTER
+                    string temp = command;
+                    command = "";
+
+                    if (temp.ToUpper() == "/SWITCH")
+                    {
+                        SetLayout();
+                    }
+                    else if (temp.StartsWith("/"))
+                    {
+                        temp = temp.Substring(1);
+                        network.Send(temp, true);
+
+                        if (temp.Split(' ')[0].ToUpper() == "QUIT")
+                        {
+                            quit = true;
+                            Ping();
+                        }
+                    }
+                    else if (activeChannel != GetChannel(server))
+                    {
+                        network.Send("PRIVMSG " + activeChannel + " :" + temp, false);
+                        activeChannel.Add(string.Format("<{0}> {1}", nick, temp), true);
+                    }
+                    else
+                    {
+                        Console.WriteLine("Use the prefix '/' before typing a command.");
+                    }
+                    break;
+
+                default:
+                    command += character;
+                    break;
+            }
+        }
+
+        public virtual void Ping()
+        {
+            network.Send("PING :" + DateTime.Now, false);
+            lastPingTime = DateTime.Now;
+        }
+
+        public virtual void HandleReceived(string received)
         {
             Channel channel;
             CommandResponse response = new CommandResponse(nick, received);

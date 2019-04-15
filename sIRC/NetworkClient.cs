@@ -83,7 +83,7 @@ namespace sIRC
 
             try
             {
-                while (true)
+                while (!closed)
                 {
                     string input;
                     while ((input = reader.ReadLine()) != null)
@@ -93,7 +93,6 @@ namespace sIRC
             catch
             {
                 Notification("! Could not continue listening the server");
-                Close();
             }
         }
 
@@ -130,6 +129,7 @@ namespace sIRC
         public virtual void Close()
         {
             Notification("! Closing the network stream");
+            closed = true;
 
             if (irc != null)
                 irc.Close();
@@ -143,7 +143,8 @@ namespace sIRC
             if (writer != null)
                 reader.Close();
 
-            closed = true;
+            while (listener != null && listener.IsAlive)
+                Notification("! Waiting for the listener to abort...");
         }
     }
 }
