@@ -14,42 +14,40 @@ namespace sIRC
         private readonly Spinner spinner;
 
         private readonly string server;
+        private readonly int port;
         private readonly string user;
         private readonly string nick;
 
         private Channel activeChannel;
         private string command;
-        private bool ready, refresh, quit;
+        private bool ready, refresh, closed;
         private DateTime lastPingTime;
         private TimeSpan pingDelay = TimeSpan.FromMinutes(1);
 
         public Client(string server, int port, string user, string nick)
         {
             this.server = server;
+            this.port = port;
             this.user = user;
             this.nick = nick;
 
             log = new Log();
             log.OnWrite += Log_OnWrite;
 
-            network = new NetworkClient(server, port);
-            network.CommandResponseReceived += Network_OnCommandResponseReceived;
-
+            network = new NetworkClient();
             spinner = new Spinner();
 
             activeChannel = new Channel(server);
-            channels = new Hashtable();
-            channels.Add(server, activeChannel);
+
+            channels = new Hashtable
+            {
+                { server, activeChannel }
+            };
         }
 
         private void Log_OnWrite()
         {
             refresh = true;
-        }
-
-        private void Network_OnCommandResponseReceived(string message)
-        {
-            HandleReceived(message);
         }
 
         public virtual void Update()
@@ -67,22 +65,47 @@ namespace sIRC
             }
         }
 
-        public virtual void Start()
+        public void Start()
         {
-            while (!network.Connect(nick, user))
+            if (Connect())
             {
+                Run();
+            }
+
+            if (CheckReconnect())
+                Start();
+        }
+
+        private bool Connect()
+        {
+            ready = false;
+            closed = false;
+
+            int count = 0;
+
+            while (!network.Connect(server, port, nick, user))
+            {
+                if (count++ >= 5)
+                {
+                    closed = true;
+                    return false;
+                }
+
                 Console.WriteLine("Attempting to reconnect in 5 seconds");
                 Thread.Sleep(5000);
             }
 
-            Run();
+            return true;
         }
 
         public void Run()
         {
-            while (network.Connected())
+            while (network.Connected)
             {
                 network.Slice();
+
+                while (network.ResponseAvailable)
+                    HandleReceived(network.ReadMessage());
 
                 if (ready)
                 {
@@ -106,26 +129,28 @@ namespace sIRC
                     Update();
             }
 
-            Restart();
+            network.Close();
+            network.Slice();
         }
 
-        public void Restart()
+        private bool CheckReconnect()
         {
-            ready = false;
-
-            Console.WriteLine("Write 'RECONNECT' or 'EXIT' to continue...");
-
-            while (quit)
+            if (closed)
             {
-                string command = Console.ReadLine();
+                Console.WriteLine("Write 'RECONNECT' or 'EXIT' to continue...");
 
-                if (command.ToUpper() == "RECONNECT")
-                    quit = false;
-                else if (command.ToUpper() == "EXIT")
-                    return;
+                while (true)
+                {
+                    string command = Console.ReadLine();
+
+                    if (command.ToUpper() == "RECONNECT")
+                        return true;
+                    else if (command.ToUpper() == "EXIT")
+                        return false;
+                }
             }
 
-            Start();
+            return true;
         }
 
         public virtual void HandleInput(char character)
@@ -154,17 +179,17 @@ namespace sIRC
                     else if (temp.StartsWith("/"))
                     {
                         temp = temp.Substring(1);
-                        network.Send(temp, true);
+                        network.Send(temp);
 
                         if (temp.Split(' ')[0].ToUpper() == "QUIT")
                         {
-                            quit = true;
+                            closed = true;
                             Ping();
                         }
                     }
                     else if (activeChannel != GetChannel(server))
                     {
-                        network.Send("PRIVMSG " + activeChannel + " :" + temp, false);
+                        network.Send("PRIVMSG " + activeChannel + " :" + temp);
                         activeChannel.AddEntry(string.Format("<{0}> {1}", nick, temp), true, ConsoleColor.DarkMagenta);
                     }
                     else
@@ -181,7 +206,7 @@ namespace sIRC
 
         public virtual void Ping()
         {
-            network.Send("PING :" + DateTime.Now, false);
+            network.Send("PING :" + DateTime.Now);
             lastPingTime = DateTime.Now;
         }
 
@@ -204,7 +229,7 @@ namespace sIRC
 
             if (response.Command == "PING")
             {
-                network.Send("PONG " + response.GetParameter(0), false);
+                network.Send("PONG " + response.GetParameter(0));
                 return;
             }
 

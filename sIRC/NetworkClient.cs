@@ -8,57 +8,50 @@ namespace sIRC
 {
     class NetworkClient
     {
-        public delegate void CommandResponseHandler(string message);
-        public event CommandResponseHandler CommandResponseReceived;
-
-        private readonly string server;
-        private readonly int port;
-
         private TcpClient irc;
         private NetworkStream stream;
-        private StreamReader reader;
-        private StreamWriter writer;
         private Thread listener;
 
-        private Queue<string> buffer;
-        private bool closed;
+        private Queue<string> responseBuffer;
+        private Queue<string> notificationBuffer;
 
-        public NetworkClient(string server, int port)
+        public bool Connected { get { return irc != null && irc.Connected; } }
+        public bool ResponseAvailable { get { return responseBuffer.Count > 0; } }
+
+        public NetworkClient()
         {
-            this.server = server;
-            this.port = port;
+            responseBuffer = new Queue<string>();
+            notificationBuffer = new Queue<string>();
+        }
 
-            buffer = new Queue<string>();
+        private void Notification(string message)
+        {
+            notificationBuffer.Enqueue(message);
         }
 
         public virtual void Slice()
         {
-            for (int i = 0; i < buffer.Count; i++)
-            {
-                string response = buffer.Dequeue();
+            while(notificationBuffer.Count > 0)
+                Log.WriteLine(notificationBuffer.Dequeue(), ConsoleColor.DarkRed);
+        }
 
-                if(response != null)
-                    CommandResponseReceived?.Invoke(response);
+        public virtual string ReadMessage()
+        {
+            lock (this)
+            {
+                return responseBuffer.Dequeue();
             }
         }
 
-        protected virtual void Notification(string message)
-        {
-            Log.WriteLine(message, ConsoleColor.DarkRed);
-        }
-
-        public virtual bool Connect(string nick, string user)
+        public virtual bool Connect(string server, int port, string nick, string user)
         {
             Notification("! Connecting...");
 
             try
             {
-                irc = new TcpClient(server, port);
+                irc = new TcpClient();
+                irc.Connect(server, port);
                 stream = irc.GetStream();
-                reader = new StreamReader(stream);
-                writer = new StreamWriter(stream);
-
-                closed = false;
 
                 Notification("! Connected to the server");
             }
@@ -68,10 +61,10 @@ namespace sIRC
                 return false;
             }
 
-            Send("NICK " + nick, false);
-            Send("USER " + user, false);
+            Send("NICK " + nick);
+            Send("USER " + user);
 
-            listener = new Thread(new ThreadStart(Receive));
+            listener = new Thread(Receive);
             listener.Start();
 
             return true;
@@ -80,71 +73,62 @@ namespace sIRC
         protected virtual void Receive()
         {
             Notification("! Starting to listen the server");
-
-            try
+            using (StreamReader reader = new StreamReader(stream))
             {
-                while (!closed)
+                string response;
+
+                try
                 {
-                    string input;
-                    while ((input = reader.ReadLine()) != null)
-                        buffer.Enqueue(input);
+                    while (true)
+                    {
+                        if ((response = reader.ReadLine()) != null)
+                        {
+                            lock (this)
+                            {
+                                responseBuffer.Enqueue(response);
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    Notification("! The listener has stopped executing");
                 }
             }
-            catch
-            {
-                Notification("! Could not continue listening the server");
-            }
         }
 
-        public virtual bool Send(string output, bool notify)
+        public virtual void Send(string output)
         {
-            if (closed)
+            if (Connected)
             {
-                Notification("! Tried to send when the stream was already closed");
-                return false;
-            }
+                StreamWriter writer = new StreamWriter(stream);
+                writer.WriteLine(output);
+                writer.Flush();
 
-            writer.WriteLine(output);
-            writer.Flush();
-
-            if(notify)
                 Log.WriteLine(output, ConsoleColor.DarkYellow);
-
-            return Connected();
-        }
-
-        public virtual bool Connected()
-        {
-            bool connected = irc != null && irc.Connected;
-
-            if (!closed && !connected)
+            }
+            else
             {
                 Notification("! Disconnected from the server");
-                Close();
             }
-
-            return connected;
         }
 
         public virtual void Close()
         {
-            Notification("! Closing the network stream");
-            closed = true;
-
-            if (irc != null)
-                irc.Close();
+            Notification("! Closing the connection");
 
             if (stream != null)
                 stream.Close();
 
-            if (reader != null)
-                reader.Close();
+            if (irc != null)
+                irc.Close();
 
-            if (writer != null)
-                reader.Close();
+            if (listener != null && listener.IsAlive)
+                listener.Abort();
 
-            while (listener != null && listener.IsAlive)
-                Notification("! Waiting for the listener to abort...");
+            irc = null;
+            stream = null;
+            listener = null;
         }
     }
 }
